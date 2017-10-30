@@ -150,7 +150,12 @@ thread_create(const char *name)
 	thread->t_did_reserve_buffers = false;
 
 	/* If you add to struct thread, be sure to initialize here */
-
+    thread->t_parent=NULL;
+    thread->t_has_parent=false;
+    thread->t_children = 0;
+    thread->t_ret=0;
+    thread->t_join_parent=NULL;
+    thread->t_join_child=NULL;
 	return thread;
 }
 
@@ -495,11 +500,11 @@ thread_make_runnable(struct thread *target, bool already_have_lock)
  * as the caller, unless the scheduler intervenes first.
  */
 int
-thread_fork(const char *name,
-	    struct proc *proc,
+thread_fork(const char *name, struct proc *proc,
 	    void (*entrypoint)(void *data1, unsigned long data2),
-	    void *data1, unsigned long data2)
+	    void *data1, unsigned long data2, struct thread **thd)
 {
+
 	struct thread *newthread;
 	int result;
 
@@ -516,6 +521,29 @@ thread_fork(const char *name,
 	}
 	thread_checkstack_init(newthread);
 
+    if(thd!=NULL)
+    {
+        curthread->t_children++;
+
+        *thd=newthread;
+        newthread->t_parent=curthread;
+        newthread->t_has_parent=true;
+        newthread->t_join_parent = sem_create(name, 0);
+
+        if(newthread->t_join_parent==NULL)
+        {
+            thread_destroy(newthread);
+            return -1;
+        }
+
+        newthread->t_join_child = sem_create(name,0);
+        if(newthread->t_join_child==NULL)
+        {
+            thread_destroy(newthread);
+            sem_destroy(newthread->t_join_parent);
+            return -1;
+        }
+    }
 	/*
 	 * Now we clone various fields from the parent thread.
 	 */
@@ -548,6 +576,23 @@ thread_fork(const char *name,
 	thread_make_runnable(newthread, false);
 
 	return 0;
+}
+
+int thread_join(struct thread *thread, int * ret)
+{
+    struct thread* cur_t;
+    struct thread *t_parent;
+
+    t_parent = thread->t_parent;
+    KASSERT(thread!=NULL&&t_parent!=NULL);
+    cur_t=curthread;
+    KASSERT(thread!=cur_t && thread->t_join_child!=NULL && thread->t_join_parent!=NULL);
+    P(thread->t_join_child);
+
+    *ret = thread->t_ret;
+    cur->t_children--;
+    thread->t_parent=NULL;
+    V(thread->t_join_parent);
 }
 
 /*
