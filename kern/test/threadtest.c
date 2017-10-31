@@ -40,6 +40,27 @@
 
 static struct semaphore *tsem = NULL;
 
+static struct lock *t_lk = NULL;
+static struct cv *t_cv = NULL;
+
+static
+void
+init_lock_cv(void)
+{
+	if (t_lk == NULL)
+	{
+		t_lk = lock_create("t_lk");
+		if (t_lk == NULL)
+			panic("Threadtest: lock_create failed\n");
+	}
+	if (t_cv == NULL)
+	{
+		t_cv = cv_create("t_cv");
+		if (t_cv == NULL)
+			panic("threadtest: cv_create failed\n");
+	}
+}
+
 static
 void
 init_sem(void)
@@ -145,27 +166,54 @@ threadtest2(int nargs, char **args)
 	return 0;
 }
 
-
-static void t_join(void *temp, unsigned long t_thread)
+static void child_print(void *temp, unsigned long t_num)
 {
 	(void) temp;
-	kprintf("Join thread: %lu\n", t_thread);
+
+	kprintf("Child thread: %lu\n", t_num);
+	for(int i=0; i<NTHREADS; i++)
+	{
+		lock_acquire(t_lk);
+		cv_signal(t_cv, t_lk);
+		lock_release(t_lk);
+	}
+}
+
+static void t_join(void *temp, unsigned long t_num)
+{
+	(void) temp;
+
+	kprintf("Join thread: %lu\n", t_num);
+	thread_fork("Child", NULL, child_print, NULL, t_num);
+
+	for(int i =0; i<NTHREADS; i++)
+	{
+		thread_join();
+		lock_acquire(t_lk);
+		cv_signal(t_cv, t_lk);
+		lock_release(t_lk);
+	}
 }
 
 static void jointest(void)
 {
-	struct thread *t_arr[NTHREADS];
+	init_lock_cv();
+	//struct thread *t_arr[NTHREADS];
 	int i=0;
 	for(i=0; i<NTHREADS; i++)
 	{
-		thread_fork2("child", NULL, &t_join, NULL, i, &(t_arr[i]));
+		thread_fork("Parent", NULL, t_join, NULL, i);
+		//thread_fork2("Child", NULL, &t_join, NULL, i, &(t_arr[i]));
 	}
 
-	int ret_val;
+	//int ret_val;
 	for(i=0; i<NTHREADS; i++)
 	{
-		kprintf("Joining: %d\n", i);
-		thread_join(t_arr[i], &ret_val);
+		kprintf("Join parent thread: %d\n", i);
+		lock_acquire(t_lk);
+		cv_wait(t_cv, t_lk);
+		lock_release(t_lk);
+		//thread_join(/*t_arr[i], &ret_val*/);
 	}
 }
 

@@ -110,6 +110,8 @@ struct thread {
 	struct semaphore *t_join_parent;
 	struct semaphore *t_join_child;
 	int t_children;
+	struct lock *join_lk;
+	struct cv *join_cv;
 
 
 	/* VFS */
@@ -158,7 +160,7 @@ int thread_fork2(const char *name, struct proc *proc,
 	void (*func)(void *, unsigned long),
 	void *data1, unsigned long data2, struct thread **thd);
 
-int thread_join(struct thread *thd, int*ret);
+int thread_join(void/*struct thread *thd, int*ret*/);
 
 /*
  * Cause the current thread to exit.

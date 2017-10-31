@@ -156,8 +156,8 @@ thread_create(const char *name)
     thread->t_ret=0;
     thread->t_join_parent=NULL;
 	thread->t_join_child=NULL;
-	//thread->join_lk = lock_create(name);
-	//thread->join_cv = cv_create(name);
+	thread->join_lk = lock_create(name);
+	thread->join_cv = cv_create(name);
 
 	return thread;
 }
@@ -628,9 +628,9 @@ thread_fork2(const char *name,
 
 /* My added thread_join **********/
 
-int thread_join(struct thread *thread, int * ret)
+int thread_join(void/*struct thread *thread, int * ret*/)
 {
-    struct thread* cur_t;
+    /*struct thread* cur_t;
     struct thread *t_parent;
 
     t_parent = thread->t_parent;
@@ -645,12 +645,13 @@ int thread_join(struct thread *thread, int * ret)
 	V(thread->t_join_parent);
 	//Not dealing with deadlocks
 	return 0;
-	/*struct thread *cur;
+	*/
+	struct thread *cur;
 	cur = curthread;
 
 	lock_acquire(cur->join_lk);
 	cv_wait(cur->join_cv, cur->join_lk);
-	lock_release(cur->join_lk);*/
+	lock_release(cur->join_lk);
 	return 0;
 
 }
