@@ -104,6 +104,13 @@ struct thread {
 	/*
 	 * Public fields
 	 */
+	struct thread *t_parent;
+	bool t_has_parent;
+	int t_ret;
+	struct semaphore *t_join_parent;
+	struct semaphore *t_join_child;
+	int t_children;
+
 
 	/* VFS */
 	bool t_did_reserve_buffers;	/* reserve_buffers() in effect */
@@ -145,7 +152,11 @@ void thread_shutdown(void);
  */
 int thread_fork(const char *name, struct proc *proc,
                 void (*func)(void *, unsigned long),
-                void *data1, unsigned long data2, struct thread **thd);
+				void *data1, unsigned long data2);/*, struct thread **thd);*/
+				
+int thread_fork2(const char *name, struct proc *proc,
+	void (*func)(void *, unsigned long),
+	void *data1, unsigned long data2, struct thread **thd);
 
 int thread_join(struct thread *thd, int*ret);
 

@@ -138,7 +138,7 @@ V(struct semaphore *sem)
 //
 // Lock.
 
-struct lock *
+struct lock*
 lock_create(const char *name)
 {
         struct lock *lock;
@@ -155,8 +155,15 @@ lock_create(const char *name)
         }
 
         lock->lk_wchan=wchan_create(name);
-        lock->lk_busy=false;
+        if(lock->lk_wchan==NULL)
+        {
+                kfree(lock->lk_name);
+		kfree(lock);
+		return NULL;
+        }
+
         spinlock_init(&lock->lk_spinlock);
+        lock->lk_busy=false;
 
         return lock;
 }
@@ -254,16 +261,16 @@ cv_wait(struct cv *cv, struct lock *lock)
 {
     KASSERT(cv != NULL && lock != NULL);
     KASSERT(curthread->t_in_interrupt == false);
-    KASSERT(lock_do_i_hold(lock));
+    //KASSERT(lock_do_i_hold(lock));
 
-    spinlock_acquire(&cv->cv_lock);
-    lock_release(lock);
-    if(lock_do_i_hold(lock) == false)
+    if(lock_do_i_hold(lock))
     {
+        spinlock_acquire(&cv->cv_lock);
+        lock_release(lock);
         wchan_sleep(cv->cv_wchan, &cv->cv_lock);
         spinlock_release(&cv->cv_lock);
         lock_acquire(lock);
-        KASSERT(lock_do_i_hold(lock));
+        //KASSERT(lock_do_i_hold(lock));
 
     }
 }
@@ -281,7 +288,7 @@ cv_signal(struct cv *cv, struct lock *lock)
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-	KASSERT(cv != NULL && lock != NULL && lock_do_i_hold(lock));
+        KASSERT(cv != NULL && lock != NULL && lock_do_i_hold(lock));
     
     spinlock_acquire(&cv->cv_lock);
     wchan_wakeall(cv->cv_wchan, &cv->cv_lock);

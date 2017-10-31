@@ -1,0 +1,280 @@
+diff --git a/defs.mk b/defs.mk
+index 9932652..d82a764 100644
+--- a/defs.mk
++++ b/defs.mk
+@@ -13,7 +13,7 @@
+ # The things that can be set here are documented in mk/os161.config.mk.
+ #
+ 
+-OSTREE=/home/ubuntu/cs161/root
++OSTREE=/home/iman/os161/root
+ PLATFORM=sys161
+ MACHINE=mips
+ COMPAT_CFLAGS= -DNEED_NTOHLL
+diff --git a/kern/include/synch.h b/kern/include/synch.h
+index fee3b07..a6f7a76 100644
+--- a/kern/include/synch.h
++++ b/kern/include/synch.h
+@@ -138,4 +138,4 @@ void cv_signal(struct cv *cv, struct lock *lock);
+ void cv_broadcast(struct cv *cv, struct lock *lock);
+ 
+ 
+-#endif /* _SYNCH_H_ */
++#endif /* _SYNCH_H_ */
+\ No newline at end of file
+diff --git a/kern/include/thread.h b/kern/include/thread.h
+index d161c8f..9e8376f 100644
+--- a/kern/include/thread.h
++++ b/kern/include/thread.h
+@@ -145,7 +145,9 @@ void thread_shutdown(void);
+  */
+ int thread_fork(const char *name, struct proc *proc,
+                 void (*func)(void *, unsigned long),
+-                void *data1, unsigned long data2);
++                void *data1, unsigned long data2, struct thread **thd);
++
++int thread_join(struct thread *thd, int*ret);
+ 
+ /*
+  * Cause the current thread to exit.
+@@ -172,4 +174,4 @@ void schedule(void);
+ void thread_consider_migration(void);
+ 
+ 
+-#endif /* _THREAD_H_ */
++#endif /* _THREAD_H_ */
+\ No newline at end of file
+diff --git a/kern/thread/synch.c b/kern/thread/synch.c
+index d083f4b..d6610e8 100644
+--- a/kern/thread/synch.c
++++ b/kern/thread/synch.c
+@@ -154,7 +154,9 @@ lock_create(const char *name)
+                 return NULL;
+         }
+ 
+-        // add stuff here as needed
++        lock->lk_wchan=wchan_create(name);
++        lock->lk_busy=false;
++        spinlock_init(&lock->lk_spinlock);
+ 
+         return lock;
+ }
+@@ -164,8 +166,8 @@ lock_destroy(struct lock *lock)
+ {
+         KASSERT(lock != NULL);
+ 
+-        // add stuff here as needed
+-
++        wchan_destroy(lock->lk_wchan);
++        spinlock_cleanup(&lock->lk_spinlock);
+         kfree(lock->lk_name);
+         kfree(lock);
+ }
+@@ -173,27 +175,34 @@ lock_destroy(struct lock *lock)
+ void
+ lock_acquire(struct lock *lock)
+ {
+-        // Write this
++        spinlock_acquire(&lock->lk_spinlock);
++
++        while(lock->lk_busy)
++        {
++            wchan_sleep(lock->lk_wchan, &lock->lk_spinlock);
++        }
++        lock->lk_busy=true;
++        lock->lk_thread=curthread;
++        spinlock_release(&lock->lk_spinlock);
+ 
+-        (void)lock;  // suppress warning until code gets written
+ }
+ 
+ void
+ lock_release(struct lock *lock)
+ {
+-        // Write this
++        spinlock_acquire(&lock->lk_spinlock);
++        KASSERT(lock->lk_thread==curthread&&lock->lk_busy);
+ 
+-        (void)lock;  // suppress warning until code gets written
++        lock->lk_busy = false;        
++        lock->lk_thread = NULL;
++        wchan_wakeone(lock->lk_wchan, &lock->lk_spinlock);
++        spinlock_release(&lock->lk_spinlock);
+ }
+ 
+ bool
+ lock_do_i_hold(struct lock *lock)
+ {
+-        // Write this
+-
+-        (void)lock;  // suppress warning until code gets written
+-
+-        return true; // dummy until code gets written
++        return lock->lk_thread == curthread;
+ }
+ 
+ ////////////////////////////////////////////////////////////
+@@ -217,7 +226,14 @@ cv_create(const char *name)
+                 return NULL;
+         }
+ 
+-        // add stuff here as needed
++        cv->cv_wchan = wchan_create(cv->cv_name);
++        if(cv->cv_wchan==NULL)
++        {
++            kfree(cv->cv_name);
++            kfree(cv);
++            return NULL;
++        }
++        spinlock_init(&cv->cv_lock);
+ 
+         return cv;
+ }
+@@ -227,8 +243,8 @@ cv_destroy(struct cv *cv)
+ {
+         KASSERT(cv != NULL);
+ 
+-        // add stuff here as needed
+-
++        spinlock_cleanup(&cv->cv_lock);
++        wchan_destroy(cv->cv_wchan);
+         kfree(cv->cv_name);
+         kfree(cv);
+ }
+@@ -236,23 +252,38 @@ cv_destroy(struct cv *cv)
+ void
+ cv_wait(struct cv *cv, struct lock *lock)
+ {
+-        // Write this
+-        (void)cv;    // suppress warning until code gets written
+-        (void)lock;  // suppress warning until code gets written
++    KASSERT(cv != NULL && lock != NULL);
++    KASSERT(curthread->t_in_interrupt == false);
++    KASSERT(lock_do_i_hold(lock));
++
++    spinlock_acquire(&cv->cv_lock);
++    lock_release(lock);
++    if(lock_do_i_hold(lock) == false)
++    {
++        wchan_sleep(cv->cv_wchan, &cv->cv_lock);
++        spinlock_release(&cv->cv_lock);
++        lock_acquire(lock);
++        KASSERT(lock_do_i_hold(lock));
++
++    }
+ }
+ 
+ void
+ cv_signal(struct cv *cv, struct lock *lock)
+ {
+-        // Write this
+-	(void)cv;    // suppress warning until code gets written
+-	(void)lock;  // suppress warning until code gets written
++    KASSERT(cv != NULL && lock != NULL && lock_do_i_hold(lock));
++
++    spinlock_acquire(&cv->cv_lock);
++    wchan_wakeone(cv->cv_wchan, &cv->cv_lock);
++    spinlock_release(&cv->cv_lock);
+ }
+ 
+ void
+ cv_broadcast(struct cv *cv, struct lock *lock)
+ {
+-	// Write this
+-	(void)cv;    // suppress warning until code gets written
+-	(void)lock;  // suppress warning until code gets written
+-}
++	KASSERT(cv != NULL && lock != NULL && lock_do_i_hold(lock));
++    
++    spinlock_acquire(&cv->cv_lock);
++    wchan_wakeall(cv->cv_wchan, &cv->cv_lock);
++    spinlock_release(&cv->cv_lock);
++}
+\ No newline at end of file
+diff --git a/kern/thread/thread.c b/kern/thread/thread.c
+index 8ac3b9d..b02ff34 100644
+--- a/kern/thread/thread.c
++++ b/kern/thread/thread.c
+@@ -150,7 +150,12 @@ thread_create(const char *name)
+ 	thread->t_did_reserve_buffers = false;
+ 
+ 	/* If you add to struct thread, be sure to initialize here */
+-
++    thread->t_parent=NULL;
++    thread->t_has_parent=false;
++    thread->t_children = 0;
++    thread->t_ret=0;
++    thread->t_join_parent=NULL;
++    thread->t_join_child=NULL;
+ 	return thread;
+ }
+ 
+@@ -495,11 +500,11 @@ thread_make_runnable(struct thread *target, bool already_have_lock)
+  * as the caller, unless the scheduler intervenes first.
+  */
+ int
+-thread_fork(const char *name,
+-	    struct proc *proc,
++thread_fork(const char *name, struct proc *proc,
+ 	    void (*entrypoint)(void *data1, unsigned long data2),
+-	    void *data1, unsigned long data2)
++	    void *data1, unsigned long data2, struct thread **thd)
+ {
++
+ 	struct thread *newthread;
+ 	int result;
+ 
+@@ -516,6 +521,29 @@ thread_fork(const char *name,
+ 	}
+ 	thread_checkstack_init(newthread);
+ 
++    if(thd!=NULL)
++    {
++        curthread->t_children++;
++
++        *thd=newthread;
++        newthread->t_parent=curthread;
++        newthread->t_has_parent=true;
++        newthread->t_join_parent = sem_create(name, 0);
++
++        if(newthread->t_join_parent==NULL)
++        {
++            thread_destroy(newthread);
++            return -1;
++        }
++
++        newthread->t_join_child = sem_create(name,0);
++        if(newthread->t_join_child==NULL)
++        {
++            thread_destroy(newthread);
++            sem_destroy(newthread->t_join_parent);
++            return -1;
++        }
++    }
+ 	/*
+ 	 * Now we clone various fields from the parent thread.
+ 	 */
+@@ -550,6 +578,23 @@ thread_fork(const char *name,
+ 	return 0;
+ }
+ 
++int thread_join(struct thread *thread, int * ret)
++{
++    struct thread* cur_t;
++    struct thread *t_parent;
++
++    t_parent = thread->t_parent;
++    KASSERT(thread!=NULL&&t_parent!=NULL);
++    cur_t=curthread;
++    KASSERT(thread!=cur_t && thread->t_join_child!=NULL && thread->t_join_parent!=NULL);
++    P(thread->t_join_child);
++
++    *ret = thread->t_ret;
++    cur->t_children--;
++    thread->t_parent=NULL;
++    V(thread->t_join_parent);
++}
++
+ /*
+  * High level, machine-independent context switch code.
+  *

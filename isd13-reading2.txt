@@ -1,0 +1,43 @@
+THREAD QUESTIONS:
+
+1)	When thread exit is called, it sets exit status and wakes up anyone waiting to exit.
+Sets thread struct pointer to t_cwd to NULL. Destroy the t_filetable that curthread points 
+to and sets the pointer to NULL.
+Then if cur points to t_addrspace, set addrspace struct pointer object, as, to 
+cur->t_addrspace, which gets set to NULL. t_addrspace is cleared before calling as_destroy,
+so if it sleeps, we won't call as_activate on a half destroyed address space, which is
+usually fatal.
+Then destroy the as pointer.
+Then check stack guard band.
+Switch zombie thread to NULL.
+Yield cpu to another process and keep running.
+
+2)	thread_switch(), which calls switchframe_switch().
+
+3)	Running - Active.
+	Ready - Can be run when able.
+	Sleeping - Waiting. Needs to be determined if thread should be deleted or set to 
+		ready to run again.
+	Zombie - Thread exited but not deleted.
+
+4)	Turning interrupts off will not allow any new interrupts to be made or processed.
+This is to ensure that the kernel code to handle interrupts is not interrupted. This is to
+ensure that the hardware remains able to execute its processes.
+It also avoids race condition in case of a shared variable.
+
+5)	A thread wakes another by calling threadlist_remhead() to get the next waiting 
+thread and sets it to ready status. It is then added to the cpu's queue to be run on
+context switch.
+
+
+SCHEDULER/SEMAPHORE QUESTIONS:
+
+1) scheduler() calls q_remhead, which passes runqueue as its parameter, and returns the next
+thread in queue.
+
+2)	q_remhead will access runqueue and return the next thread in queue by assigning
+the thread. The student must implement the synchronization method.
+
+3)	wchan_sleep() and wchan_wakeone() are used so that if there are any reseources that 
+need to be used by more than one process, one process is put to sleep so the other
+may execute the instructions. 

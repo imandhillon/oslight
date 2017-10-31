@@ -155,7 +155,10 @@ thread_create(const char *name)
     thread->t_children = 0;
     thread->t_ret=0;
     thread->t_join_parent=NULL;
-    thread->t_join_child=NULL;
+	thread->t_join_child=NULL;
+	//thread->join_lk = lock_create(name);
+	//thread->join_cv = cv_create(name);
+
 	return thread;
 }
 
@@ -499,12 +502,14 @@ thread_make_runnable(struct thread *target, bool already_have_lock)
  * process is inherited from the caller. It will start on the same CPU
  * as the caller, unless the scheduler intervenes first.
  */
-int
-thread_fork(const char *name, struct proc *proc,
-	    void (*entrypoint)(void *data1, unsigned long data2),
-	    void *data1, unsigned long data2, struct thread **thd)
-{
 
+
+int
+thread_fork(const char *name,
+	    struct proc *proc,
+	    void (*entrypoint)(void *data1, unsigned long data2),
+	    void *data1, unsigned long data2)
+{
 	struct thread *newthread;
 	int result;
 
@@ -521,29 +526,6 @@ thread_fork(const char *name, struct proc *proc,
 	}
 	thread_checkstack_init(newthread);
 
-    if(thd!=NULL)
-    {
-        curthread->t_children++;
-
-        *thd=newthread;
-        newthread->t_parent=curthread;
-        newthread->t_has_parent=true;
-        newthread->t_join_parent = sem_create(name, 0);
-
-        if(newthread->t_join_parent==NULL)
-        {
-            thread_destroy(newthread);
-            return -1;
-        }
-
-        newthread->t_join_child = sem_create(name,0);
-        if(newthread->t_join_child==NULL)
-        {
-            thread_destroy(newthread);
-            sem_destroy(newthread->t_join_parent);
-            return -1;
-        }
-    }
 	/*
 	 * Now we clone various fields from the parent thread.
 	 */
@@ -578,6 +560,74 @@ thread_fork(const char *name, struct proc *proc,
 	return 0;
 }
 
+
+/******************************** added */
+int
+thread_fork2(const char *name,
+	    struct proc *proc,
+	    void (*entrypoint)(void *data1, unsigned long data2),
+	    void *data1, unsigned long data2, struct thread **thd)
+{
+	struct thread *newthread;
+	int result;
+
+	newthread = thread_create(name);
+	if (newthread == NULL) {
+		return ENOMEM;
+	}
+
+	/* Allocate a stack */
+	newthread->t_stack = kmalloc(STACK_SIZE);
+	if (newthread->t_stack == NULL) {
+		thread_destroy(newthread);
+		return ENOMEM;
+	}
+	thread_checkstack_init(newthread);
+
+	/*
+	 * Now we clone various fields from the parent thread.
+	 */
+
+	/* Thread subsystem fields */
+	newthread->t_cpu = curthread->t_cpu;
+
+	if(thd != NULL)
+	{
+		*thd = newthread;
+		newthread->t_parent = curthread;
+		newthread->t_join_parent = sem_create(name,0);
+	}
+
+	/* Attach the new thread to its process */
+	if (proc == NULL) {
+		proc = curthread->t_proc;
+	}
+	result = proc_addthread(proc, newthread);
+	if (result) {
+		/* thread_destroy will clean up the stack */
+		thread_destroy(newthread);
+		return result;
+	}
+
+	/*
+	 * Because new threads come out holding the cpu runqueue lock
+	 * (see notes at bottom of thread_switch), we need to account
+	 * for the spllower() that will be done releasing it.
+	 */
+	newthread->t_iplhigh_count++;
+
+	/* Set up the switchframe so entrypoint() gets called */
+	switchframe_init(newthread, entrypoint, data1, data2);
+
+	/* Lock the current cpu's run queue and make the new thread runnable */
+	thread_make_runnable(newthread, false);
+
+	return 0;
+}
+
+
+/* My added thread_join **********/
+
 int thread_join(struct thread *thread, int * ret)
 {
     struct thread* cur_t;
@@ -590,9 +640,19 @@ int thread_join(struct thread *thread, int * ret)
     P(thread->t_join_child);
 
     *ret = thread->t_ret;
-    cur->t_children--;
+    cur_t->t_children--;
     thread->t_parent=NULL;
-    V(thread->t_join_parent);
+	V(thread->t_join_parent);
+	//Not dealing with deadlocks
+	return 0;
+	/*struct thread *cur;
+	cur = curthread;
+
+	lock_acquire(cur->join_lk);
+	cv_wait(cur->join_cv, cur->join_lk);
+	lock_release(cur->join_lk);*/
+	return 0;
+
 }
 
 /*
